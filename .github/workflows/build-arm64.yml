@@ -1,0 +1,81 @@
+name: Build Apple Silicon
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - "**/*.m"
+      - "**/*.h"
+      - "**/*.xib"
+      - "**/*.plist"
+      - "**/*.strings"
+      - "MLSwitcher2.xcodeproj/**"
+      - ".github/workflows/build-arm64.yml"
+
+jobs:
+  build-arm64:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build ARM64 application
+        run: |
+          set -o pipefail
+
+          rm -rf "$PWD/build"
+          mkdir -p "$PWD/build"
+
+          xcodebuild \
+            -project MLSwitcher2.xcodeproj \
+            -target MLSwitcher2 \
+            -configuration Release \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            MACOSX_DEPLOYMENT_TARGET=11.0 \
+            CONFIGURATION_BUILD_DIR="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build | tee xcodebuild.log
+
+      - name: Verify application architecture
+        run: |
+          APP_PATH="$PWD/build/MLSwitcher2.app"
+
+          test -d "$APP_PATH"
+          file "$APP_PATH/Contents/MacOS/MLSwitcher2"
+          lipo -info "$APP_PATH/Contents/MacOS/MLSwitcher2"
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+      - name: Ad-hoc sign application
+        run: codesign --force --deep --sign - "$APP_PATH"
+
+      - name: Package application
+        run: |
+          ditto -c -k \
+            --sequesterRsrc \
+            --keepParent \
+            "$APP_PATH" \
+            MLSwitcher2-arm64.zip
+
+      - name: Upload application
+        uses: actions/upload-artifact@v4
+        with:
+          name: MLSwitcher2-arm64
+          path: MLSwitcher2-arm64.zip
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
