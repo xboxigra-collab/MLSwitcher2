@@ -27,10 +27,10 @@ jobs:
 
       - name: Build ARM64 application
         run: |
-          set -o pipefail
-
           rm -rf "$PWD/build"
           mkdir -p "$PWD/build"
+
+          set +e
 
           xcodebuild \
             -project MLSwitcher2.xcodeproj \
@@ -45,22 +45,57 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             clean build | tee xcodebuild.log
 
+          XCODE_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          APP_PATH="$PWD/build/MLSwitcher2.app"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "MLSwitcher2.app was not created."
+            exit "$XCODE_STATUS"
+          fi
+
+          echo "Application was created successfully."
+          echo "xcodebuild exit code: $XCODE_STATUS"
+
       - name: Verify application architecture
         run: |
           APP_PATH="$PWD/build/MLSwitcher2.app"
+          EXECUTABLE="$APP_PATH/Contents/MacOS/MLSwitcher2"
 
           test -d "$APP_PATH"
-          file "$APP_PATH/Contents/MacOS/MLSwitcher2"
-          lipo -info "$APP_PATH/Contents/MacOS/MLSwitcher2"
+          test -f "$EXECUTABLE"
+
+          file "$EXECUTABLE"
+          lipo -info "$EXECUTABLE"
+
+          if ! lipo -info "$EXECUTABLE" | grep -q "arm64"; then
+            echo "The application executable is not ARM64."
+            exit 1
+          fi
 
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
       - name: Ad-hoc sign application
-        run: codesign --force --deep --sign - "$APP_PATH"
+        run: |
+          codesign \
+            --force \
+            --deep \
+            --sign - \
+            "$APP_PATH"
+
+          codesign \
+            --verify \
+            --deep \
+            --strict \
+            --verbose=2 \
+            "$APP_PATH"
 
       - name: Package application
         run: |
-          ditto -c -k \
+          ditto \
+            -c \
+            -k \
             --sequesterRsrc \
             --keepParent \
             "$APP_PATH" \
@@ -71,9 +106,10 @@ jobs:
         with:
           name: MLSwitcher2-arm64
           path: MLSwitcher2-arm64.zip
+          if-no-files-found: error
 
-      - name: Upload build log on failure
-        if: failure()
+      - name: Upload build log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-log
